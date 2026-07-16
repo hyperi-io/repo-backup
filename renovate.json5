@@ -1,0 +1,61 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "github>hyperi-io/renovate-config",
+    ":dependencyDashboard",
+    ":semanticCommitsDisabled",
+  ],
+  timezone: "Australia/Sydney",
+  schedule: ["* 0-6 * * 1"],
+  commitMessagePrefix: "deps:",
+  // pep621 = pyproject.toml deps; github-actions enabled for when a workflow
+  // lands. uv.lock is refreshed by lockFileMaintenance below.
+  enabledManagers: ["pep621", "github-actions"],
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["* 0-6 * * 1"],
+    automerge: false,
+    commitMessageAction: "refresh",
+    groupName: "lockfile maintenance",
+  },
+  vulnerabilityAlerts: {
+    enabled: true,
+    labels: ["dependencies", "security"],
+    schedule: ["at any time"],
+  },
+  packageRules: [
+    {
+      description: "Python dev-tooling patch/digest: group (automerge off until CI)",
+      matchManagers: ["pep621"],
+      matchDepTypes: ["project.optional-dependencies"],
+      matchPackageNames: ["ruff", "mypy", "pytest", "pytest-cov", "black", "isort"],
+      matchUpdateTypes: ["patch", "digest"],
+      // automerge stays OFF until a CI workflow gates PRs - this repo has no
+      // .github/workflows yet, so an automerge here would land untested.
+      automerge: false,
+      groupName: "python dev-tooling",
+      labels: ["dependencies", "python", "dev-tooling"],
+    },
+    {
+      description: "Python runtime deps: review",
+      matchManagers: ["pep621"],
+      matchDepTypes: ["project.dependencies"],
+      automerge: false,
+      labels: ["dependencies", "python"],
+    },
+    {
+      description: "GH Actions: group minor/patch/digest (automerge off until CI)",
+      matchManagers: ["github-actions"],
+      groupName: "github-actions",
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      // automerge OFF until a CI workflow gates PRs (see note above).
+      automerge: false,
+    },
+    {
+      description: "Any major: always label, never silent",
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      labels: ["dependencies", "review-required"],
+    },
+  ],
+}

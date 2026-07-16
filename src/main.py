@@ -2,7 +2,7 @@
 """
 Enterprise repository backup tool for GitHub, GitLab, and Bitbucket
 
-Copyright 2025 HyperSec
+Copyright 2025 HyperI
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -366,7 +366,7 @@ This S3 bucket contains automated backups of Git repositories from GitHub, GitLa
 ## Bucket Information
 - **Bucket Name**: {bucket_name}
 - **Region**: {self.region}
-- **Created**: {datetime.now().strftime('%Y-%m-%d')}
+- **Created**: {datetime.now().strftime("%Y-%m-%d")}
 - **Purpose**: Automated repository backups
 
 ## Structure
@@ -411,7 +411,7 @@ git remote set-url origin https://github.com/org/repo.git
 
 ## Management
 This bucket is managed by the repo-backup tool.
-Repository: https://github.com/hypersec-io/repo-backup
+Repository: https://github.com/hyperi-io/repo-backup
 """
 
         try:
@@ -777,6 +777,11 @@ class RepoBackupOrchestrator:
                         f"[TOKEN] Using auto-discovered AWS profile: {aws_profile}"
                     )
 
+            # S3-compatible stores (Cloudflare R2, MinIO) need an explicit
+            # endpoint. AWS_ENDPOINT_URL is the name the AWS SDKs and CLI v2
+            # already standardise on, so it works without extra config here.
+            endpoint_url = os.getenv("AWS_ENDPOINT_URL") or os.getenv("S3_ENDPOINT_URL")
+
             self.s3_uploader = S3Uploader(
                 bucket_name=bucket_name,
                 region=os.getenv("AWS_REGION", "us-west-2"),
@@ -785,6 +790,7 @@ class RepoBackupOrchestrator:
                 aws_profile=aws_profile,
                 prefix=os.getenv("S3_PREFIX", "repos"),
                 work_dir=self.work_dir,
+                endpoint_url=endpoint_url,
             )
             logger.info(f"S3 uploader configured for bucket: {bucket_name}")
 
@@ -1288,7 +1294,7 @@ class RepoBackupOrchestrator:
         logger.info(f"[SUCCESS] Successful backups: {successful}")
         logger.info(f"[FAIL] Failed backups: {failed}")
         logger.info(f"[TOTAL] Total repositories: {len(repos)}")
-        logger.info(f"[RATE] Success rate: {(successful/len(repos)*100):.1f}%")
+        logger.info(f"[RATE] Success rate: {(successful / len(repos) * 100):.1f}%")
 
         if failed > 0:
             logger.error(

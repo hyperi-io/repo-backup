@@ -4,7 +4,7 @@ repo-backup - Enterprise repository backup tool
 Syncs corporate Git repositories from GitHub, GitLab, and Bitbucket
 to local storage or AWS S3 with professional security and lifecycle management.
 
-Copyright 2025 HyperSec
+Copyright 2025 HyperI
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

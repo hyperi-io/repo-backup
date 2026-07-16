@@ -36,7 +36,7 @@ Install with uv (recommended - isolated environment):
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install repo-backup system-wide (isolated venv)
-uv tool install git+https://gitlab.com/hypersec-repo/repo-backup
+uv tool install git+https://github.com/hyperi-io/repo-backup
 
 # Or from PyPI (when published)
 # uv tool install repo-backup
@@ -51,7 +51,7 @@ Or run without installing:
 
 ```bash
 # One-off execution
-uvx --from git+https://gitlab.com/hypersec-repo/repo-backup repo-backup --help
+uvx --from git+https://github.com/hyperi-io/repo-backup repo-backup --help
 ```
 
 ### Developer Setup
@@ -60,7 +60,7 @@ If you're planning to contribute or modify the code:
 
 ```bash
 # Get the code
-git clone https://github.com/hypersec-io/repo-backup.git
+git clone https://github.com/hyperi-io/repo-backup.git
 cd repo-backup
 
 # Install with dev and test dependencies
@@ -429,7 +429,7 @@ jobs:
     steps:
       - uses: astral-sh/setup-uv@v4
       - run: |
-          uv tool install git+https://github.com/hypersec-io/repo-backup
+          uv tool install git+https://github.com/hyperi-io/repo-backup
           repo-backup s3
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -524,7 +524,7 @@ If something's not working:
 2. Verify your `.env` configuration
 3. Make sure you have all prerequisites installed
 4. Review the token setup instructions above
-5. Check our [issues](https://github.com/hypersec-io/repo-backup/issues) page
+5. Check our [issues](https://github.com/hyperi-io/repo-backup/issues) page
 
 ---
 

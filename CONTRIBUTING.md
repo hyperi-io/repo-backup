@@ -23,7 +23,7 @@ Get your development environment running in just a few steps:
 
 ```bash
 # Grab the code
-git clone https://github.com/hypersec-io/repo-backup.git
+git clone https://github.com/hyperi-io/repo-backup.git
 cd repo-backup
 
 # Install with dev and test dependencies
@@ -68,7 +68,7 @@ Pro tip: Use test repositories and sandboxed environments when developing. Nobod
 
 Bugs happen! If you've found one:
 
-1. Check if someone's already reported it in our [issues](https://github.com/hypersec-io/repo-backup/issues)
+1. Check if someone's already reported it in our [issues](https://github.com/hyperi-io/repo-backup/issues)
 2. If not, open a new issue with:
    - What you were trying to do
    - What happened instead
@@ -251,7 +251,7 @@ We're committed to providing a welcoming and inclusive environment. Be kind, be 
 Stuck on something? No worries!
 
 - Check the existing [documentation](README.md)
-- Look through [closed issues](https://github.com/hypersec-io/repo-backup/issues?q=is%3Aissue+is%3Aclosed) - someone might have had the same question
+- Look through [closed issues](https://github.com/hyperi-io/repo-backup/issues?q=is%3Aissue+is%3Aclosed) - someone might have had the same question
 - Open a new issue if you're still stuck
 - Be patient - we're a small team and sometimes life gets busy
 

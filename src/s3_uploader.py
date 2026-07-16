@@ -1,7 +1,7 @@
 """
 AWS S3 uploader for repository backups
 
-Copyright 2025 HyperSec
+Copyright 2025 HyperI
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -42,9 +42,11 @@ class S3Uploader:
         aws_profile: Optional[str] = None,
         prefix: str = "repos",
         work_dir: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
     ):
         self.bucket_name = bucket_name
         self.prefix = prefix
+        self.endpoint_url = endpoint_url
         self.logger = logging.getLogger(self.__class__.__name__)
 
         session_kwargs = {"region_name": region}
@@ -56,8 +58,16 @@ class S3Uploader:
             session_kwargs["profile_name"] = aws_profile
 
         session = boto3.Session(**session_kwargs)
-        self.s3_client = session.client("s3")
-        self.s3_resource = session.resource("s3")
+
+        # endpoint_url targets S3-compatible stores (Cloudflare R2, MinIO,
+        # Ceph). Left unset, boto3 resolves the real AWS endpoint from region.
+        client_kwargs: Dict[str, Any] = {}
+        if endpoint_url:
+            client_kwargs["endpoint_url"] = endpoint_url
+            self.logger.info(f"[CONFIG] Using S3-compatible endpoint: {endpoint_url}")
+
+        self.s3_client = session.client("s3", **client_kwargs)
+        self.s3_resource = session.resource("s3", **client_kwargs)
         self.bucket = self.s3_resource.Bucket(bucket_name)
 
         # Verify credentials are valid by making a simple API call
@@ -542,13 +552,66 @@ class S3Uploader:
                         shutil.rmtree(repo_path)
                     return False
 
+            # Key off the last commit date so the S3 key is stable across
+            # re-runs (idempotent), mirroring _direct_upload. Compute it BEFORE
+            # archiving so we can skip empty repos and already-backed-up
+            # versions without paying for the tar.
+            last_commit_result = subprocess.run(
+                [
+                    "git",
+                    "--git-dir",
+                    repo_path,
+                    "log",
+                    "-1",
+                    "--format=%cd",
+                    "--date=format:%Y%m%d_%H%M%S",
+                    "--all",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            last_commit_date = last_commit_result.stdout.strip()
+            if last_commit_result.returncode != 0 or not last_commit_date:
+                # Empty repo (no commits) - skip, matching _direct_upload rather
+                # than inventing a now() timestamp that uploads a fresh object
+                # every run.
+                self.logger.info(
+                    f"[SKIP] Skipping {repo.name} - repository is empty (no commits)"
+                )
+                if os.path.exists(repo_path):
+                    shutil.rmtree(repo_path)
+                return True
+
+            s3_key = (
+                f"{self.prefix}/{repo.platform}/{repo.owner}/"
+                f"{repo.name}_{last_commit_date}.tar.gz"
+            )
+
+            # Skip if this exact version already exists (matches _direct_upload).
+            try:
+                existing = self.s3_client.head_object(
+                    Bucket=self.bucket_name, Key=s3_key
+                )
+                self.logger.info(
+                    f"[SKIP] Backup already exists in S3 for {repo.name}: {s3_key} "
+                    f"({existing.get('ContentLength', 0) / 1024 / 1024:.2f} MB)"
+                )
+                if os.path.exists(repo_path):
+                    shutil.rmtree(repo_path)
+                return True
+            except (
+                self.s3_client.exceptions.NoSuchKey,
+                self.s3_client.exceptions.ClientError,
+            ):
+                # Object does not exist - proceed with the archive + upload.
+                pass
+
             # Create tar.gz archive
             self.logger.info(f"Archiving {repo.name}...")
             with tarfile.open(archive_path, "w:gz") as tar:
                 tar.add(repo_path, arcname=repo.name)
 
             # Upload to S3
-            s3_key = f"{s3_key_base}.tar.gz"
             file_size = os.path.getsize(archive_path)
 
             self.logger.info(

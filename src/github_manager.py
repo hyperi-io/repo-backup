@@ -1,7 +1,7 @@
 """
 GitHub repository manager
 
-Copyright 2025 HyperSec
+Copyright 2025 HyperI
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import logging
 import os
 from typing import List
 
-from github import Github
+from github import Auth, Github
 
 from .base import Repository, RepositoryManager
 
@@ -28,7 +28,9 @@ from .base import Repository, RepositoryManager
 class GitHubManager(RepositoryManager):
     def __init__(self, token: str, exclude_personal: bool = True):
         super().__init__(token, exclude_personal)
-        self.client = Github(token)
+        # PyGithub 2.x deprecated the positional login_or_token in favour of
+        # an explicit Auth object.
+        self.client = Github(auth=Auth.Token(token))
 
         # Validate authentication immediately by accessing user data
         try:

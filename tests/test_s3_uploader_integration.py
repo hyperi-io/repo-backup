@@ -47,6 +47,24 @@ pytestmark = pytest.mark.skipif(
     not _HAS_TESTCONTAINERS, reason="testcontainers[minio] not installed"
 )
 
+
+def _git_lfs_available():
+    """True if `git lfs` is usable. The dangling-LFS test needs a real git-lfs;
+    without it the uploader hits the (separate) git-lfs-not-installed hard error,
+    which is a different code path, so we skip rather than misreport."""
+    try:
+        return (
+            subprocess.run(
+                ["git", "lfs", "version"], capture_output=True, text=True
+            ).returncode
+            == 0
+        )
+    except (OSError, FileNotFoundError):  # pragma: no cover - env guard
+        return False
+
+
+_HAS_GIT_LFS = _git_lfs_available()
+
 # The uploader hardcodes `ServerSideEncryption: AES256` (SSE-S3). MinIO only
 # honours that header when it has a KMS backend, so we hand the container a
 # single built-in key. A fixed 32-byte key keeps the test deterministic; its
@@ -77,6 +95,72 @@ def _make_git_repo(path, content="hello\n"):
     )
     subprocess.run(
         ["git", "-C", p, "-c", "commit.gpgsign=false", "commit", "-m", "initial"],
+        check=True,
+        capture_output=True,
+    )
+    return p
+
+
+# A syntactically valid Git LFS pointer whose backing object (this oid) exists
+# on no server anywhere - the real "dangling pointer" shape that made
+# office365-audit-log-collector's `git lfs fetch --all` 404.
+_DANGLING_LFS_POINTER = (
+    "version https://git-lfs.github.com/spec/v1\n"
+    "oid sha256:"
+    "1111111111111111111111111111111111111111111111111111111111111111\n"
+    "size 12345\n"
+)
+
+
+def _make_lfs_repo_with_dangling_pointer(path):
+    """Build a real local git repo that declares Git LFS and commits a file
+    which is a valid LFS *pointer* whose backing object exists nowhere.
+
+    Committed with the lfs clean filter disabled (`-c filter.lfs.clean=cat`) so
+    the stored blob is EXACTLY the pointer text - no LFS object is ever written
+    to any store. A `git clone --mirror` of this path therefore has a live LFS
+    pointer in history, but `git lfs fetch --all` fails with "remote missing
+    object" (verified: exit 2). No mocks: real git, real git-lfs, real failure -
+    the same failure the deleted-from-server case produces.
+    """
+    path.mkdir(parents=True, exist_ok=True)
+    p = str(path)
+    subprocess.run(["git", "init", "-b", "main", p], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", p, "config", "user.email", "ci@example.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", p, "config", "user.name", "CI"], check=True, capture_output=True
+    )
+    (path / ".gitattributes").write_text("*.bin filter=lfs diff=lfs merge=lfs -text\n")
+    (path / "data.bin").write_text(_DANGLING_LFS_POINTER)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            p,
+            "-c",
+            "filter.lfs.clean=cat",
+            "add",
+            ".gitattributes",
+            "data.bin",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            p,
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "add dangling lfs pointer",
+        ],
         check=True,
         capture_output=True,
     )
@@ -283,5 +367,103 @@ def test_archive_upload_writes_targz_without_nameerror(minio, tmp_path):
         k
         for k in keys
         if k.startswith("repos/gitlab/acme/demo2_") and k.endswith(".tar.gz")
+    ]
+    assert targz_keys, keys
+
+
+@pytest.mark.skipif(not _HAS_GIT_LFS, reason="git-lfs not installed")
+def test_direct_upload_survives_dangling_lfs(minio, tmp_path):
+    """A repo whose `git lfs fetch --all` fails (dangling/missing LFS object)
+    must STILL be backed up. The git bundle carries full history plus the LFS
+    pointer files and is recoverable, so the bundle must land; only the separate
+    LFS-objects companion is skipped.
+
+    Real regression: office365-audit-log-collector had a pointer whose blob was
+    deleted from the server, so the fetch 404'd and previously the WHOLE repo
+    was dropped from the backup (return False). This asserts a .bundle lands
+    instead of the repo being skipped.
+    """
+    uploader, client = _uploader(minio, "backup-lfs-dangle", tmp_path / "work")
+    repo_dir = _make_lfs_repo_with_dangling_pointer(tmp_path / "lfs-src")
+
+    repo = Repository(
+        name="danglelfs",
+        clone_url=repo_dir,
+        owner="acme",
+        is_private=True,
+        is_fork=False,
+        is_owned_by_user=False,
+        platform="gitlab",
+        default_branch="main",
+    )
+
+    # The upload must SUCCEED despite the LFS fetch failing.
+    assert uploader.upload_repository(repo, method="direct") is True
+
+    keys = _list_keys(client, "backup-lfs-dangle")
+    bundle_keys = [
+        k
+        for k in keys
+        if k.startswith("repos/gitlab/acme/danglelfs_") and k.endswith(".bundle")
+    ]
+    assert bundle_keys, keys
+
+    # has_lfs stayed False (blobs were never fetched), so NO `_lfs.tar.gz`
+    # companion object exists - we don't archive blobs we never got.
+    lfs_keys = [k for k in keys if k.endswith("_lfs.tar.gz")]
+    assert not lfs_keys, lfs_keys
+
+    # The object is a real, restorable git bundle...
+    dl = tmp_path / "restored.bundle"
+    client.download_file("backup-lfs-dangle", bundle_keys[0], str(dl))
+    verify = subprocess.run(
+        ["git", "bundle", "verify", str(dl)], capture_output=True, text=True
+    )
+    assert verify.returncode == 0, verify.stderr
+
+    # ...that preserves the LFS pointer file in history. Bare clone so no smudge
+    # filter runs (there is no LFS backend to smudge against).
+    restored = tmp_path / "restored.git"
+    clone = subprocess.run(
+        ["git", "clone", "--bare", str(dl), str(restored)],
+        capture_output=True,
+        text=True,
+    )
+    assert clone.returncode == 0, clone.stderr
+    show = subprocess.run(
+        ["git", "--git-dir", str(restored), "show", "HEAD:data.bin"],
+        capture_output=True,
+        text=True,
+    )
+    assert show.returncode == 0, show.stderr
+    assert "git-lfs" in show.stdout, show.stdout
+
+
+@pytest.mark.skipif(not _HAS_GIT_LFS, reason="git-lfs not installed")
+def test_archive_upload_survives_dangling_lfs(minio, tmp_path):
+    """Same robustness for the --archive path: a failed `git lfs fetch --all`
+    must not drop the repo; the .tar.gz of the mirror clone (history + pointers)
+    is still uploaded."""
+    uploader, client = _uploader(minio, "backup-lfs-archive", tmp_path / "work")
+    repo_dir = _make_lfs_repo_with_dangling_pointer(tmp_path / "lfs-src")
+
+    repo = Repository(
+        name="danglelfs2",
+        clone_url=repo_dir,
+        owner="acme",
+        is_private=True,
+        is_fork=False,
+        is_owned_by_user=False,
+        platform="gitlab",
+        default_branch="main",
+    )
+
+    assert uploader.upload_repository(repo, method="archive") is True
+
+    keys = _list_keys(client, "backup-lfs-archive")
+    targz_keys = [
+        k
+        for k in keys
+        if k.startswith("repos/gitlab/acme/danglelfs2_") and k.endswith(".tar.gz")
     ]
     assert targz_keys, keys

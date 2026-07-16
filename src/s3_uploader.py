@@ -262,13 +262,22 @@ class S3Uploader:
                     text=True,
                 )
                 if lfs_fetch.returncode != 0:
-                    self.logger.error(
-                        f"[ERROR] LFS fetch failed for {repo.name}: {lfs_fetch.stderr}"
+                    # A dangling/missing LFS object (e.g. a pointer whose blob was
+                    # deleted from the server, so the fetch 404s) must NOT sink the
+                    # whole repo. The git bundle still carries full history plus the
+                    # LFS *pointer* files and is worth keeping - so warn and carry on
+                    # with the bundle, skipping only the separate LFS-objects
+                    # companion. has_lfs stays False so we never try to archive blobs
+                    # we never fetched. (git-lfs-not-installed is handled above and is
+                    # a hard error - the operator must install git-lfs.)
+                    self.logger.warning(
+                        f"[WARN] Some LFS objects for {repo.name} could not be "
+                        f"fetched; the bundle will NOT carry LFS blobs, but full "
+                        f"history and LFS pointer files are still backed up "
+                        f"(git-lfs stderr: {lfs_fetch.stderr.strip()})"
                     )
-                    if os.path.exists(repo_path):
-                        shutil.rmtree(repo_path)
-                    return False
-                has_lfs = True
+                else:
+                    has_lfs = True
 
             self.logger.debug(
                 f"Clone command completed - checking repository path exists: {os.path.exists(repo_path)}"
@@ -570,12 +579,19 @@ class S3Uploader:
                     text=True,
                 )
                 if lfs_fetch.returncode != 0:
-                    self.logger.error(
-                        f"[ERROR] LFS fetch failed for {repo.name}: {lfs_fetch.stderr}"
+                    # A dangling/missing LFS object (e.g. a pointer whose blob was
+                    # deleted from the server, so the fetch 404s) must NOT sink the
+                    # whole repo. The mirror clone still holds full history plus the
+                    # LFS *pointer* files, so warn and carry on - the tar.gz below
+                    # captures whatever LFS blobs did come down and always the
+                    # history + pointers. (git-lfs-not-installed is handled above
+                    # and is a hard error - the operator must install git-lfs.)
+                    self.logger.warning(
+                        f"[WARN] Some LFS objects for {repo.name} could not be "
+                        f"fetched; the archive will NOT carry those LFS blobs, but "
+                        f"full history and LFS pointer files are still backed up "
+                        f"(git-lfs stderr: {lfs_fetch.stderr.strip()})"
                     )
-                    if os.path.exists(repo_path):
-                        shutil.rmtree(repo_path)
-                    return False
 
             # Key off the last commit date so the S3 key is stable across
             # re-runs (idempotent), mirroring _direct_upload. Compute it BEFORE

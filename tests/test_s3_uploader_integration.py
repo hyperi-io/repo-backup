@@ -117,7 +117,7 @@ def _boto_client(minio):
     )
 
 
-def _uploader(minio, bucket, work_dir):
+def _uploader(minio, bucket, work_dir, prefix="repos"):
     """Create the bucket (S3Uploader.__init__ head_bucket's it) and return an
     uploader wired to the MinIO endpoint plus a bare boto3 client for asserts."""
     cfg = minio.get_config()
@@ -134,7 +134,7 @@ def _uploader(minio, bucket, work_dir):
         aws_secret_access_key=cfg["secret_key"],
         endpoint_url=_endpoint(minio),
         work_dir=str(work_dir),
-        prefix="repos",
+        prefix=prefix,
     )
     return uploader, client
 
@@ -198,6 +198,40 @@ def test_direct_upload_writes_and_restores_bundle(minio, tmp_path):
     )
     assert clone.returncode == 0, clone.stderr
     assert (clone_dir / "README.md").read_text() == "hello\n"
+
+
+def test_empty_prefix_has_no_leading_slash(minio, tmp_path):
+    """An empty prefix must key off "gitlab/..." - no leading slash, no "//".
+
+    The WS2 R2 export runs with S3_PREFIX="", so the object key is built with
+    prefix="". The old f-string ("{prefix}/{platform}/...") produced a leading
+    slash ("/gitlab/...") for an empty prefix; _object_key() drops the empty
+    segment instead. This is the regression guard for that.
+    """
+    uploader, client = _uploader(minio, "backup-noprefix", tmp_path / "work", prefix="")
+    repo_dir = _make_git_repo(tmp_path / "src-repo")
+
+    repo = Repository(
+        name="demo",
+        clone_url=repo_dir,
+        owner="acme",
+        is_private=True,
+        is_fork=False,
+        is_owned_by_user=False,
+        platform="gitlab",
+        default_branch="main",
+    )
+
+    assert uploader.upload_repository(repo, method="direct") is True
+
+    keys = _list_keys(client, "backup-noprefix")
+    bundle_keys = [k for k in keys if k.endswith(".bundle")]
+    assert bundle_keys, keys
+
+    for key in bundle_keys:
+        assert not key.startswith("/"), key
+        assert "//" not in key, key
+        assert key.startswith("gitlab/acme/demo_"), key
 
 
 def test_direct_upload_is_idempotent(minio, tmp_path):

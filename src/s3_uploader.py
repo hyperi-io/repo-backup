@@ -128,6 +128,21 @@ class S3Uploader:
             )
             raise
 
+    def _object_key(self, *parts: Optional[str]) -> str:
+        """Join S3 key segments with '/', dropping empty/None parts.
+
+        An empty prefix must not produce a leading slash: with prefix="" this
+        yields "gitlab/<owner>/<name>_<date>.bundle", not "/gitlab/...". A
+        non-empty prefix is unchanged (prefix="repos" -> "repos/gitlab/...").
+
+        Args:
+            *parts: Key segments in order; empty strings and None are skipped.
+
+        Returns:
+            The parts joined by "/" with no leading, trailing, or doubled slash.
+        """
+        return "/".join(str(p) for p in parts if p is not None and str(p) != "")
+
     def upload_repository(
         self, repo: Repository, method: str = "direct", local_backup_path: str = None
     ) -> bool:
@@ -311,7 +326,12 @@ class S3Uploader:
                 last_commit_date = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             # Check if this version already exists in S3
-            s3_key = f"{self.prefix}/{repo.platform}/{repo.owner}/{repo.name}_{last_commit_date}.bundle"
+            s3_key = self._object_key(
+                self.prefix,
+                repo.platform,
+                repo.owner,
+                f"{repo.name}_{last_commit_date}.bundle",
+            )
             self.logger.debug(f"Checking if S3 key already exists: {s3_key}")
 
             try:
@@ -439,7 +459,12 @@ class S3Uploader:
                         tar.add(lfs_objects_path, arcname="lfs/objects")
 
                     lfs_size = os.path.getsize(lfs_archive_path)
-                    lfs_s3_key = f"{self.prefix}/{repo.platform}/{repo.owner}/{repo.name}_{last_commit_date}_lfs.tar.gz"
+                    lfs_s3_key = self._object_key(
+                        self.prefix,
+                        repo.platform,
+                        repo.owner,
+                        f"{repo.name}_{last_commit_date}_lfs.tar.gz",
+                    )
 
                     self.logger.info(
                         f"[LFS] Uploading LFS archive to S3 ({lfs_size / 1024 / 1024:.2f} MB)..."
@@ -582,9 +607,11 @@ class S3Uploader:
                     shutil.rmtree(repo_path)
                 return True
 
-            s3_key = (
-                f"{self.prefix}/{repo.platform}/{repo.owner}/"
-                f"{repo.name}_{last_commit_date}.tar.gz"
+            s3_key = self._object_key(
+                self.prefix,
+                repo.platform,
+                repo.owner,
+                f"{repo.name}_{last_commit_date}.tar.gz",
             )
 
             # Skip if this exact version already exists (matches _direct_upload).
@@ -659,7 +686,7 @@ class S3Uploader:
 
     def list_backups(self, platform: Optional[str] = None) -> Dict[str, Any]:
         """List all backups in S3"""
-        prefix = f"{self.prefix}/{platform}" if platform else self.prefix
+        prefix = self._object_key(self.prefix, platform) if platform else self.prefix
 
         backups = []
         paginator = self.s3_client.get_paginator("list_objects_v2")
@@ -692,7 +719,7 @@ class S3Uploader:
             )
 
             # Test write permissions by uploading a small test file
-            test_key = f"{self.prefix}/health_check_test.txt"
+            test_key = self._object_key(self.prefix, "health_check_test.txt")
             test_content = f"Health check test - {datetime.now().isoformat()}"
 
             self.s3_client.put_object(
@@ -760,7 +787,12 @@ class S3Uploader:
         try:
             # Generate S3 key with current timestamp to avoid duplicates
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            s3_key = f"{self.prefix}/{repo.platform}/{repo.owner}/{repo.name}_{timestamp}.bundle"
+            s3_key = self._object_key(
+                self.prefix,
+                repo.platform,
+                repo.owner,
+                f"{repo.name}_{timestamp}.bundle",
+            )
 
             file_size = os.path.getsize(bundle_path)
             self.logger.info(

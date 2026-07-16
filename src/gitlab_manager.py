@@ -139,7 +139,10 @@ class GitLabManager(RepositoryManager):
             if is_corporate or not self.exclude_personal:
                 repos.append(
                     Repository(
-                        name=project.name,
+                        # Use the URL-safe path slug, not the mutable display
+                        # name (project.name can contain spaces/caps). Keeps
+                        # --repos matching and bundle filenames on stable slugs.
+                        name=project.path,
                         clone_url=clone_url,
                         owner=project.namespace["full_path"],
                         is_private=project.visibility == "private",
